@@ -24,8 +24,9 @@ Neural networks transform data through a series of layers, gradually reshaping t
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/neural-network-topology.git
-cd neural-network-topology
+git clone https://github.com/EduPH/Latent-Space-Topology-Evolution-in-Multilayer-Perceptrons.git
+
+cd Latent-Space-Topology-Evolution-in-Multilayer-Perceptrons
 
 # Install dependencies
 pip install numpy matplotlib tensorflow gudhi networkx scikit-learn scipy
