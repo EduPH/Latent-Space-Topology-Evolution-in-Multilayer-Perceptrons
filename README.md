@@ -1,4 +1,4 @@
-# Latent-Space-Topology-Evolution-in-Multilayer-Perceptrons
+# Latent Space Topology Evolution in Multilayer Perceptrons
 
 This repository provides tools for analyzing the topological structure of neural network latent spaces using techniques from computational topology. The primary focus is on visualizing and understanding how data representations evolve through the layers of a neural network by constructing and analyzing simplicial complexes.
 
