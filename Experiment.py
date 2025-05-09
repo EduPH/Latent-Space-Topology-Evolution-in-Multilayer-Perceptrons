@@ -52,7 +52,6 @@ hidden_layer_model = Model(
 
 X1 = hidden_layer_model.predict(X)
 
-#from mpl_toolkits.mplot3d import Axes3D
 # Create the 3D plot
 fig = plt.figure(figsize=(10, 8))
 ax = fig.add_subplot(111, projection='3d')
@@ -61,8 +60,6 @@ ax = fig.add_subplot(111, projection='3d')
 ax.scatter(X1[:,0],X1[:,1],X1[:,2],c = X2>0.5)
 plt.show()
 #%% VR-complexes and pullback
-#st0 = compute_vietoris_rips_complex(X,0.1,max_dimension=1)
-#st1 = compute_vietoris_rips_complex(X1,0.1,max_dimension=1)
 epsilon_values = [0.3,0.2,0.1]
 st2 = compute_vietoris_rips_complex(X2,epsilon_values[2],max_dimension=1)
 
@@ -140,3 +137,16 @@ plt.show()
 
 # Run trajectory analysis
 analysis = analyze_trajectories(trajectories, y)
+
+# Layer persistence diagrams
+def compute_plot_pd(X,max_dim = 2):
+    dm = cdist(X, X)
+    simplex_tree = gd.SimplexTree.create_from_array(dm, max_filtration=3)
+    simplex_tree.expansion(max_dim)
+    persistence = simplex_tree.persistence(homology_coeff_field = 2)
+    gd.plot_persistence_diagram(persistence)
+    plt.show()
+    return
+compute_plot_pd(X,max_dim=2)
+compute_plot_pd(X1,max_dim=2)
+compute_plot_pd(X2,max_dim=0)
