@@ -1349,4 +1349,43 @@ def analyze_trajectories(trajectories, y=None):
 #         return plt.gca()
 
 
-
+#%% MLP persistence
+def create_combined_filtration(simplex_trees_by_layer, max_dimension=2):
+    """
+    Create a single combined filtration from a sequence of simplex trees
+    by assigning filtration values corresponding to the layer index.
+    
+    Parameters:
+    -----------
+    simplex_trees_by_layer : list
+        List of Gudhi SimplexTree objects representing each layer
+    max_dimension : int, optional (default=2)
+        Maximum dimension of simplices to include
+        
+    Returns:
+    --------
+    combined_st : gudhi.SimplexTree
+        A simplex tree containing the combined filtration
+    """
+    import gudhi as gd
+    
+    # Create a new empty simplex tree for the combined filtration
+    combined_st = gd.SimplexTree()
+    
+    # Keep track of simplices we've already added
+    added_simplices = set()
+    
+    # Process each layer
+    for layer_idx, st in enumerate(simplex_trees_by_layer):
+        # Get all simplices up to max_dimension
+        for dim in range(max_dimension + 1):
+            for simplex, _ in st.get_skeleton(dim):
+                # Create a frozen set for the simplex (for hashing)
+                simplex_set = frozenset(simplex)
+                
+                # If this simplex hasn't been added yet, add it with filtration = layer_idx
+                if simplex_set not in added_simplices:
+                    combined_st.insert(simplex, layer_idx)
+                    added_simplices.add(simplex_set)
+    
+    return combined_st

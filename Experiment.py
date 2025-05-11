@@ -1,4 +1,5 @@
 from VR_trajectories import *
+from st_to_sophia import *
 
 #%% Experiment 1
 #%% Generate a dataset for demonstration
@@ -38,7 +39,12 @@ model.compile(
 # Print model summary
 model.summary()
 
-model.fit(X, y, epochs=1000,batch_size = 16)
+#model.fit(X, y, epochs=2000,batch_size = 16)
+
+#model.save('experiment.keras')
+model = keras.models.load_model('experiment.keras')
+
+
 #%% Latent representations
 X2 = model.predict(X)
 
@@ -75,7 +81,7 @@ visualize_vr_complex_2d(X, k0, epsilon_values[0], show_labels=False)
 #%% Communities and trajectory analysis
 # After computing the VR complexes for each layer
 # Define parameters
-epsilon_values = [0.3, 0.2, 0.1]  # For input, hidden, output layers
+#epsilon_values = [0.3, 0.2, 0.1]  # For input, hidden, output layers
 community_method = 'louvain'      # Community detection method
 n_clusters = None                # Auto-detect number of clusters
 
@@ -150,3 +156,38 @@ def compute_plot_pd(X,max_dim = 2):
 compute_plot_pd(X,max_dim=2)
 compute_plot_pd(X1,max_dim=2)
 compute_plot_pd(X2,max_dim=0)
+
+
+
+# ML Persistence
+k0.expansion(1)
+k1.expansion(2)
+
+# Diagrams H0
+simplex_trees_by_layer=[k0,k1,st2]
+k=create_combined_filtration(simplex_trees_by_layer)
+k.compute_persistence()
+intervals = k.persistence_intervals_in_dimension(0)
+gd.plot_persistence_diagram(intervals)
+gd.plot_persistence_barcode(intervals)
+plt.show()
+
+
+# Diagrams H1
+simplex_trees_by_layer=[k0,k1]
+k=create_combined_filtration(simplex_trees_by_layer)
+k.compute_persistence()
+intervals = k.persistence_intervals_in_dimension(1)
+gd.plot_persistence_diagram(intervals)
+gd.plot_persistence_barcode(intervals)
+plt.show()
+
+# Diagrams H2
+simplex_trees_by_layer=[k1]
+k=create_combined_filtration(simplex_trees_by_layer)
+k.compute_persistence(persistence_dim_max=True)
+intervals = k.persistence_intervals_in_dimension(2)
+gd.plot_persistence_diagram(intervals)
+gd.plot_persistence_barcode(intervals)
+plt.show()
+
