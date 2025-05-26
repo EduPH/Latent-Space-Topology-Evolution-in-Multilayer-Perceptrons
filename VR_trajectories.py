@@ -60,7 +60,7 @@ def compute_vietoris_rips_complex(points, epsilon, max_dimension=2):
 def compute_vietoris_rips_complex_with_collapses(points, epsilon, max_dimension=2):
     """
     Compute the Vietoris-Rips complex for a given point cloud at a fixed epsilon value.
-    It applied collapses. Be careful if used for MLP persistence as it will create more communities.
+    It applied collapses making it more efficient.
     
     Parameters:
     -----------
