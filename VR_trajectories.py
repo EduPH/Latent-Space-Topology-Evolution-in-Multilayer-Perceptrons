@@ -32,6 +32,50 @@ def compute_vietoris_rips_complex(points, epsilon, max_dimension=2):
     simplex_tree : gudhi.SimplexTree
         A simplex tree representation of the Vietoris-Rips complex
     """
+    # Initialize an empty simplex tree
+    simplex_tree = SimplexTree()
+    
+    # Add vertices (0-simplices)
+    for i in range(len(points)):
+        simplex_tree.insert([i], filtration=0.0)
+    
+
+    dm = cdist(points, points)
+    # Compute pairwise distances
+    n_points = len(points)
+    for i in range(n_points):
+        for j in range(i+1, n_points):
+            # Compute Euclidean distance between points i and j
+            distance = dm[i,j]
+            
+            # If distance is less than or equal to epsilon, add the edge (1-simplex)
+            if distance <= epsilon:
+                simplex_tree.insert([i, j], filtration=distance)
+    
+    # Expand the simplex tree to include higher-dimensional simplices
+    simplex_tree.expansion(max_dimension)
+    
+    return simplex_tree
+
+def compute_vietoris_rips_complex_with_collapses(points, epsilon, max_dimension=2):
+    """
+    Compute the Vietoris-Rips complex for a given point cloud at a fixed epsilon value.
+    It applied collapses. Be careful if used for MLP persistence as it will create more communities.
+    
+    Parameters:
+    -----------
+    points : numpy.ndarray
+        Array of shape (n_points, n_dimensions) representing the point cloud
+    epsilon : float
+        Distance threshold for the Vietoris-Rips complex
+    max_dimension : int, optional (default=2)
+        Maximum dimension of the simplices in the complex
+        
+    Returns:
+    --------
+    simplex_tree : gudhi.SimplexTree
+        A simplex tree representation of the Vietoris-Rips complex
+    """
     dm = cdist(points, points)
     simplex_tree = gd.SimplexTree.create_from_array(dm, max_filtration=epsilon)
     simplex_tree.collapse_edges()
