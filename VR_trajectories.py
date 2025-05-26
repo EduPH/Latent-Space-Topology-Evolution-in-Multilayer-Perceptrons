@@ -32,31 +32,12 @@ def compute_vietoris_rips_complex(points, epsilon, max_dimension=2):
     simplex_tree : gudhi.SimplexTree
         A simplex tree representation of the Vietoris-Rips complex
     """
-    # Initialize an empty simplex tree
-    simplex_tree = SimplexTree()
-    
-    # Add vertices (0-simplices)
-    for i in range(len(points)):
-        simplex_tree.insert([i], filtration=0.0)
-    
-
     dm = cdist(points, points)
-    # Compute pairwise distances
-    n_points = len(points)
-    for i in range(n_points):
-        for j in range(i+1, n_points):
-            # Compute Euclidean distance between points i and j
-            distance = dm[i,j]
-            
-            # If distance is less than or equal to epsilon, add the edge (1-simplex)
-            if distance <= epsilon:
-                simplex_tree.insert([i, j], filtration=distance)
-    
-    # Expand the simplex tree to include higher-dimensional simplices
+    simplex_tree = gd.SimplexTree.create_from_array(dm, max_filtration=epsilon)
+    simplex_tree.collapse_edges()
     simplex_tree.expansion(max_dimension)
     
     return simplex_tree
-
 
 #%% Plot VR 2D
 
@@ -456,7 +437,7 @@ def identify_communities(G, n_clusters=None, method='louvain'):
         # Apply the selected community detection method
         if method == 'louvain':
             try:
-                import community as community_louvain
+                import community.community_louvain as community_louvain
                 partition = community_louvain.best_partition(subgraph)
                 
                 # Renumber communities to be consecutive with other components
