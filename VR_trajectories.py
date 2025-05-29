@@ -57,32 +57,6 @@ def compute_vietoris_rips_complex(points, epsilon, max_dimension=2):
     
     return simplex_tree
 
-def compute_vietoris_rips_complex_with_collapses(points, epsilon, max_dimension=2):
-    """
-    Compute the Vietoris-Rips complex for a given point cloud at a fixed epsilon value.
-    It applied collapses making it more efficient.
-    
-    Parameters:
-    -----------
-    points : numpy.ndarray
-        Array of shape (n_points, n_dimensions) representing the point cloud
-    epsilon : float
-        Distance threshold for the Vietoris-Rips complex
-    max_dimension : int, optional (default=2)
-        Maximum dimension of the simplices in the complex
-        
-    Returns:
-    --------
-    simplex_tree : gudhi.SimplexTree
-        A simplex tree representation of the Vietoris-Rips complex
-    """
-    dm = cdist(points, points)
-    simplex_tree = gd.SimplexTree.create_from_array(dm, max_filtration=epsilon)
-    simplex_tree.collapse_edges()
-    simplex_tree.expansion(max_dimension)
-    
-    return simplex_tree
-
 #%% Plot VR 2D
 
 def visualize_vr_complex_2d(points, simplex_tree, epsilon, show_labels=True):
