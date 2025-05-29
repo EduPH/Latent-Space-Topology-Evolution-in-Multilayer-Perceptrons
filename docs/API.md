@@ -206,7 +206,7 @@ Analyzes properties of the computed trajectories.
 
 ## Experiment Module
 
-The `Experiment.py` module provides a complete example of using the `VR_trajectories` module to analyze a simple neural network.
+The `Experiment.ipynb` jupyter notebook provides a complete example of using the `VR_trajectories` module to analyze a simple neural network.
 
 Key steps in the example:
 1. Generate a synthetic dataset (circles)
