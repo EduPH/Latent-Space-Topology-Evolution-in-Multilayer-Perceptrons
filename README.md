@@ -93,7 +93,7 @@ plt.show()
 analysis = analyze_trajectories(trajectories, y)
 ```
 
-For a complete example, see `Experiment.ipynb`.
+For a complete example, see `Experiment.ipynb` for a toy experiment or `cardiotocography.ipynb` for the experiment described in the associated paper.
 
 ## Key Concepts
 
