@@ -93,7 +93,7 @@ plt.show()
 analysis = analyze_trajectories(trajectories, y)
 ```
 
-For a complete example, see `Experiment.py`.
+For a complete example, see `Experiment.ipynb`.
 
 ## Key Concepts
 
