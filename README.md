@@ -1,15 +1,15 @@
 # Latent Space Topology Evolution in Multilayer Perceptrons
 
-This repository provides tools for analyzing the topological structure of neural network latent spaces using techniques from computational topology. The primary focus is on visualizing and understanding how data representations evolve through the layers of a neural network by constructing and analyzing simplicial complexes.
+This repository provides tools for analysing the topological structure of neural network latent spaces using techniques from computational topology. The primary focus is on visualising and understanding how data representations evolve through the layers of a neural network by constructing and analysing simplicial complexes.
 
 ## Overview
 
 Neural networks transform data through a series of layers, gradually reshaping the representation space to make classification or regression tasks easier. This repository implements a novel approach to understanding these transformations by:
 
 1. Constructing Vietoris-Rips complexes at each layer of the network
-2. Analyzing the topological features of these complexes
+2. Analysing the topological features of these complexes
 3. Tracking how data points "flow" through the network using community detection
-4. Visualizing trajectories to reveal how the network separates different classes
+4. Visualising trajectories to reveal how the network separates different classes
 
 ## Features
 
@@ -133,10 +133,13 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 If you use this code in your research, please cite:
 
 ```
-@software{neural_network_topology,
-  author = {Eduardo Paluzo-Hidalgo},
-  title = {Latent Space Topology Evolution in Multilayer Perceptrons},
-  year = {2025},
-  url = {https://github.com/yourusername/neural-network-topology}
+@misc{paluzohidalgo2025latentspacetopologyevolution,
+      title={Latent Space Topology Evolution in Multilayer Perceptrons}, 
+      author={Eduardo Paluzo-Hidalgo},
+      year={2025},
+      eprint={2506.01569},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2506.01569}, 
 }
 ```
