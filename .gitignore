@@ -1,0 +1,12 @@
+/.ipynb_checkpoints
+*.bak
+/.spyproject
+*.pyc
+*.pyc
+*.pyc
+/__pycache__
+/build
+/results
+/ltep.egg-info
+ltep/.DS_Store
+ltep/datasets/.DS_Store

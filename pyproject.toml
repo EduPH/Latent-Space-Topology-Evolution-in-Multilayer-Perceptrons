@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ltep"
+version = "0.1.0"
+description = "Latent-space Topology Evolution Pipeline: TDA of MLP/CNN latent spaces"
+requires-python = ">=3.9"
+dependencies = ["numpy", "scipy", "gudhi", "scikit-learn", "matplotlib", "networkx"]
+# Heavy, backend-specific deps used only by some loaders are left optional:
+#   tensorflow  (cardio / COIL MLPs)   torch, torchvision (pretrained ResNet)
+
+[project.optional-dependencies]
+tf = ["tensorflow"]
+torch = ["torch", "torchvision"]
+
+# Only the ltep package is installed. The root-level shims (pipeline.py, etc.)
+# and the experiments/ scripts are NOT part of the installed package -- they are
+# run in place from the repo root (python -m experiments.cardio).
+[tool.setuptools.packages.find]
+include = ["ltep*"]
