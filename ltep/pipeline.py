@@ -291,8 +291,13 @@ def select_epsilon(latents, use_bootstrap=USE_BOOTSTRAP, n_boot=None, alpha=None
         diam = float(pdist(X).max()) if len(X) > 1 else 1.0
 
         def _layer_eps(dim):
+            # Degree-k persistence needs only the (k+1)-skeleton, so cap the VR build at
+            # dim+1: H0 reads the 1-skeleton (MST/edges), H1 the 2-skeleton (triangles).
+            # This leaves the diagram (and tau) identical while skipping the wasted
+            # triangle construction in the H0 bootstrap band -- the dominant cost on deep
+            # H0 towers (e.g. the ResNet family).
             r = select_epsilon_for_layer(
-                X, dim=dim, max_dimension=max_dimension,
+                X, dim=dim, max_dimension=min(max_dimension, dim + 1),
                 use_bootstrap=use_bootstrap, n_boot=n_boot, alpha=alpha,
                 vr_builder=compute_vietoris_rips_complex, rng=rng)
             return r  # r["epsilon"] is None when no significant plateau exists

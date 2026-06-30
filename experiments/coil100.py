@@ -517,6 +517,96 @@ def ae_collapse_sweep(X, obj, enc_depths, bottleneck_dim, ae_width, epochs,
     return agg, rdepth
 
 
+def _linear_cka(A, B):
+    """Linear CKA between two representations on the SAME rows (feature dims may
+    differ). 1 = identical up to rotation/scale; small = the layer changed a lot."""
+    A = np.asarray(A, float); A = A - A.mean(0)
+    B = np.asarray(B, float); B = B - B.mean(0)
+    hsic = np.linalg.norm(B.T @ A, "fro") ** 2
+    den = np.linalg.norm(A.T @ A, "fro") * np.linalg.norm(B.T @ B, "fro")
+    return float(hsic / den) if den > 0 else 0.0
+
+
+def ae_collapse_baselines(X, obj, agg, enc_depths, bottleneck_dim, ae_width, epochs,
+                          recon_tol=2.0, loop_frac=0.5, seed=0, cka_thr=0.9, outdir="."):
+    """Non-topological baselines for the encoder-depth choice (reviewer R1.2). The AE
+    encoder is a UNIFORM-width stack, so random-position layer drop is degenerate
+    (dropping any single width-{ae_width} layer yields the same architecture); the
+    meaningful comparison is between DEPTH-SELECTION CRITERIA:
+
+      (T) topological         -- smallest depth keeping reconstruction AND the per-object
+                                 loops (the paper's rule);
+      (R) reconstruction-only -- smallest depth within recon_tol x best MSE, IGNORING the
+                                 loops (a purely functional pruning criterion);
+      (C) representation CKA   -- collapse the run of encoder layers whose consecutive
+                                 linear CKA stays >= cka_thr (representations 'unchanged'),
+                                 the non-topological analogue of one inert stage.
+
+    (T) and (R) reuse the already-computed sweep `agg` (no retraining); (C) trains one
+    full-depth encoder to read its consecutive-layer CKA profile. Prints a comparison
+    and saves coil_baselines.json."""
+    from ltep.datasets import coil100 as base
+    from ltep import runtime as rs
+    import json
+    n_with = next(iter(agg.values()))["n"]
+    best = min(agg[d]["recon"] for d in agg)
+
+    okT = [d for d in enc_depths if agg[d]["kept"] >= 0.8 * n_with
+           and agg[d]["recon"] <= recon_tol * best]
+    d_T = min(okT) if okT else None
+    okR = [d for d in enc_depths if agg[d]["recon"] <= recon_tol * best]
+    d_R = min(okR) if okR else None
+
+    # (C) consecutive-layer CKA on the deepest trained encoder
+    dmax = max(enc_depths)
+    with rs.measure() as t_cka_train:
+        model = build_mlp_autoencoder(enc_depth=dmax, width=ae_width,
+                                      bottleneck_dim=bottleneck_dim, seed=seed)
+        model.fit(X, X, epochs=epochs, batch_size=32, verbose=0)
+    names = encoder_layer_names(dmax)
+    reps = base.head_representations(model, X, names)   # [input_flat, enc_1..enc_dmax, bottleneck]
+    enc_reps = reps[1:1 + dmax]                          # the width-ae_width encoder layers
+    cka_consec = [_linear_cka(enc_reps[i], enc_reps[i + 1])
+                  for i in range(len(enc_reps) - 1)]
+    n_changes = sum(c < cka_thr for c in cka_consec)     # each below-thr pair = a real change
+    d_C = 1 + n_changes
+
+    def _loops(d):  return (f"{agg[d]['kept']:.1f}/{n_with}" if d in agg else "n/a")
+    def _recon(d):  return (f"{agg[d]['recon']:.5f}" if d in agg else "n/a")
+
+    print("\n" + "=" * 70)
+    print("AE ENCODER-DEPTH BASELINES (criterion comparison; random drop is degenerate)")
+    print("=" * 70)
+    print(f"  full depth {dmax}; best recon {best:.5f}; recon_tol {recon_tol}x; "
+          f"loop_frac {loop_frac}; CKA thr {cka_thr}")
+    print(f"  consecutive encoder CKA (enc_i -> enc_i+1): {[round(c,3) for c in cka_consec]}")
+    print(f"\n  {'criterion':>26} | {'rec. depth':>10} | {'loops kept':>12} | {'recon':>9}")
+    print(f"  {'topological (recon+loops)':>26} | {str(d_T):>10} | {_loops(d_T):>12} | {_recon(d_T):>9}")
+    print(f"  {'reconstruction-only':>26} | {str(d_R):>10} | {_loops(d_R):>12} | {_recon(d_R):>9}")
+    print(f"  {'representation CKA':>26} | {str(d_C):>10} | {_loops(d_C):>12} | {_recon(d_C):>9}")
+    agree = (d_T == d_R == d_C)
+    print(f"\n  verdict: criteria {'AGREE' if agree else 'DIFFER'} "
+          f"(topo={d_T}, recon-only={d_R}, CKA={d_C}). "
+          + ("All three collapse to the same depth: the topological reading is "
+             "corroborated by a functional and a representation-similarity criterion."
+             if agree else
+             "Where they differ, the loop criterion is what protects the preserved "
+             "feature; recon-only / CKA can over-collapse and break loops."))
+    print(f"  runtime: CKA full-depth train {t_cka_train['seconds']:.1f}s "
+          f"(recon-only reuses the sweep, no extra training)")
+    rec = dict(full_depth=dmax, best_recon=best, recon_tol=recon_tol,
+               loop_frac=loop_frac, cka_thr=cka_thr, cka_consecutive=cka_consec,
+               depth_topological=d_T, depth_recon_only=d_R, depth_cka=d_C,
+               agree=bool(agree),
+               runtime=dict(cka_train_s=float(t_cka_train["seconds"])),
+               per_depth={int(d): dict(recon=agg[d]["recon"], kept=agg[d]["kept"],
+                                       bar=agg[d]["bar"]) for d in agg})
+    with open(os.path.join(outdir, "coil_baselines.json"), "w") as f:
+        json.dump(rec, f, indent=2)
+    print(f"  saved {os.path.join(outdir, 'coil_baselines.json')}")
+    return rec
+
+
 def collapsed_ae_figures(X, obj, ang, enc_depth, *, bottleneck_dim, ae_width, epochs,
                          angles, use_bootstrap, seed=SEED):
     """Train the recommended collapsed AE and emit the per-object topology figures
@@ -714,7 +804,7 @@ def plot_overlay(curves):
 def main(tasks=("ae", "clf"), n_objects=10, epochs=150, enc_depth=3, dense_depth=4,
          bottleneck_dim=32, ae_width=256, group_size=1, subsample=1.0, angles=24,
          select_by_loop=False, select_pool=None, collapse_ae=False, collapse_seeds=5,
-         use_bootstrap=True, force_retrain=False, outdir=None):
+         use_bootstrap=True, force_retrain=False, outdir=None, baselines=False):
     global FIGDIR
     from ltep.datasets import coil100 as base
     from ltep import pipeline as pl, output
@@ -730,10 +820,16 @@ def main(tasks=("ae", "clf"), n_objects=10, epochs=150, enc_depth=3, dense_depth
     if collapse_ae:
         FIGDIR = outdir or output.run_dir("coil100", tag=f"collapse_ae_bn{bottleneck_dim}")
         input_verification(X, obj, ang)
-        _, rdepth = ae_collapse_sweep(
-            X, obj, enc_depths=list(range(enc_depth, 0, -1)),
+        enc_depths = list(range(enc_depth, 0, -1))
+        agg, rdepth = ae_collapse_sweep(
+            X, obj, enc_depths=enc_depths,
             bottleneck_dim=bottleneck_dim, ae_width=ae_width, epochs=epochs,
             seeds=range(collapse_seeds), outdir=FIGDIR)
+        # non-topological depth-selection baselines (reconstruction-only, CKA)
+        if baselines:
+            ae_collapse_baselines(
+                X, obj, agg, enc_depths=enc_depths, bottleneck_dim=bottleneck_dim,
+                ae_width=ae_width, epochs=epochs, outdir=FIGDIR)
         # per-object topology figures for the collapsed encoder (and the full one to
         # contrast): layer diagrams, MLP-persistence barcodes, trajectory flow.
         for d in {rdepth, enc_depth} - {None}:
@@ -865,6 +961,11 @@ if __name__ == "__main__":
     ap.add_argument("--select-pool", type=int, default=None,
                     help="how many objects to scan when --select-by-loop (default "
                          "max(20, 4*objects)).")
+    ap.add_argument("--baselines", action="store_true",
+                    help="with --collapse-ae: add non-topological depth-selection "
+                         "baselines (reconstruction-only and CKA-similarity) and save "
+                         "coil_baselines.json. Random-position drop is degenerate for a "
+                         "uniform-width encoder, so it is not included.")
     ap.add_argument("--collapse-ae", action="store_true",
                     help="AE encoder-collapse mode: retrain encoders from --enc-depth "
                          "down to 1 and report the smallest that keeps reconstruction "
@@ -891,4 +992,5 @@ if __name__ == "__main__":
              group_size=args.group_size, subsample=args.subsample, angles=angles,
              select_by_loop=args.select_by_loop, select_pool=args.select_pool,
              collapse_ae=args.collapse_ae, collapse_seeds=args.seeds,
-             use_bootstrap=(not args.fast), force_retrain=args.retrain, outdir=rd)
+             use_bootstrap=(not args.fast), force_retrain=args.retrain, outdir=rd,
+             baselines=args.baselines)

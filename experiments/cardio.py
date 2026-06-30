@@ -204,6 +204,220 @@ def validate_collapse(conv, hidden_widths, X_train, y_train, X_test, y_test,
 
 
 # ============================================================================
+# Matched-depth baselines (reviewer R1.2: comparison vs pruning/representation
+# methods). Remove the SAME number of hidden layers the topological collapse
+# removes (R), but choose WHICH layers by a non-topological rule, retrain
+# identically, and compare. Isolates the value of the topological LOCALISATION,
+# not merely the depth reduction.
+# ============================================================================
+
+def _linear_cka(A, B):
+    """Linear CKA between two representations on the SAME rows (feature dims may
+    differ). 1 = identical up to rotation/scale; small = the layer changed the
+    representation a lot. Mirrors the helper in ltep.datasets.cardio."""
+    A = np.asarray(A, float) - np.asarray(A, float).mean(0)
+    B = np.asarray(B, float) - np.asarray(B, float).mean(0)
+    hsic = np.linalg.norm(B.T @ A, "fro") ** 2
+    den = np.linalg.norm(A.T @ A, "fro") * np.linalg.norm(B.T @ B, "fro")
+    return float(hsic / den) if den > 0 else 0.0
+
+
+def _topological_drop(hidden_widths, blocks):
+    """0-based hidden-layer indices removed by collapsing each block to its first
+    layer (the same rule as pl.collapsed_hidden_widths). Representation i (1-based
+    over latents) is hidden layer i-1."""
+    drop_reps = set()
+    for p, q in blocks:
+        drop_reps.update(range(p + 1, q + 1))          # keep the block's first layer
+    return sorted(j for j in range(len(hidden_widths)) if (j + 1) in drop_reps)
+
+
+def validate_baselines(conv, hidden_widths, latents, X_train, y_train, X_test, y_test,
+                       full_acc, epochs, seed, n_random=5):
+    """Matched-depth ablation against two non-topological layer-removal rules:
+
+      (1) RANDOM-position drop -- remove R random hidden layers, averaged over
+          n_random distinct draws. The control for the 'redundancy is often
+          interior' claim: if random removal of R layers does as well, the
+          topological localisation adds nothing.
+      (2) REPRESENTATION-SIMILARITY (CKA) drop -- remove the R hidden layers that
+          change the representation least, scored by linear CKA with the preceding
+          representation. The non-topological analogue of an 'inert transition'.
+
+    The topological collapse removes the same R layers chosen by the collapsible
+    blocks. All nets are retrained with the SAME seed and epochs, so only the layer
+    SELECTION differs. Returns a record for table building."""
+    from ltep.datasets.cardio import build_mlp, train_model
+
+    _retrain_secs = []      # wall-clock of every baseline retrain (runtime accounting)
+
+    def _train_acc(widths, s=seed):
+        with rs.measure() as t:
+            m = build_mlp(X_train.shape[1], list(widths), seed=s)
+            train_model(m, X_train, y_train, epochs=epochs)
+        _retrain_secs.append(t["seconds"])
+        pred = (m.predict(X_test, verbose=0).ravel() > 0.5).astype(int)
+        return float((pred == np.asarray(y_test)).mean())
+
+    blocks = conv["redundancy"]["collapsible_blocks"]
+    R = conv["redundancy"]["redundancy"]
+    n_full = len(hidden_widths)
+
+    print("\n" + "=" * 70)
+    print("BASELINE COMPARISON (matched-depth layer-removal rules)")
+    print("=" * 70)
+    if R == 0:
+        print("  R=0: no layers removed -> no matched-depth baseline to compare.")
+        return dict(redundancy=0)
+
+    topo_drop = _topological_drop(hidden_widths, blocks)
+    collapsed = pl.collapsed_hidden_widths(hidden_widths, blocks)
+    topo_acc = _train_acc(collapsed)
+
+    # (1) random-position drop, averaged over n_random distinct R-subsets
+    rng = np.random.default_rng(seed)
+    rand_accs, rand_drops, seen, tries = [], [], set(), 0
+    while len(rand_accs) < n_random and tries < 50 * n_random:
+        tries += 1
+        drop = tuple(sorted(int(j) for j in rng.choice(n_full, size=R, replace=False)))
+        if drop in seen:
+            continue
+        seen.add(drop)
+        widths_r = tuple(w for j, w in enumerate(hidden_widths) if j not in drop)
+        rand_accs.append(_train_acc(widths_r))
+        rand_drops.append(drop)
+
+    # (2) CKA-similarity drop: latent i (1..m) is hidden layer i-1; score = CKA(prev,
+    # this); highest CKA = least change = dropped first.
+    cka = [(_linear_cka(latents[i - 1], latents[i]), i - 1) for i in range(1, n_full + 1)]
+    cka_drop = sorted(j for _, j in sorted(cka, key=lambda t: -t[0])[:R])
+    widths_cka = tuple(w for j, w in enumerate(hidden_widths) if j not in cka_drop)
+    cka_acc = _train_acc(widths_cka)
+
+    rmean, rstd = float(np.mean(rand_accs)), float(np.std(rand_accs))
+    print(f"  full network {tuple(hidden_widths)}  acc {full_acc:.4f}; "
+          f"remove R={R} hidden layer(s)\n")
+    print(f"  {'rule':>26} | {'layers removed':>18} | {'test acc':>20}")
+    print(f"  {'topological (collapse)':>26} | {str(topo_drop):>18} | {topo_acc:20.4f}")
+    print(f"  {'representation CKA':>26} | {str(cka_drop):>18} | {cka_acc:20.4f}")
+    print(f"  {'random (mean+-std)':>26} | {'(varied)':>18} | "
+          f"{rmean:.4f} +/- {rstd:.4f}")
+    print(f"  {'random (worst..best)':>26} | {'':>18} | "
+          f"{min(rand_accs):.4f} .. {max(rand_accs):.4f}")
+    print(f"\n  verdict: topological - random(mean) = {topo_acc - rmean:+.4f}; "
+          f"topological - CKA = {topo_acc - cka_acc:+.4f}  "
+          f"(positive => topological localisation helps)")
+    n_retr = len(_retrain_secs)
+    retrain_total = float(np.sum(_retrain_secs))
+    print(f"  runtime: {n_retr} baseline retrains, "
+          f"{retrain_total:.1f}s total ({retrain_total/max(n_retr,1):.1f}s/retrain)")
+    return dict(redundancy=R, topo=dict(drop=topo_drop, acc=topo_acc),
+                cka=dict(drop=cka_drop, acc=cka_acc),
+                random=dict(accs=rand_accs, drops=[list(d) for d in rand_drops],
+                            mean=rmean, std=rstd),
+                runtime=dict(n_retrains=n_retr, retrain_total_s=retrain_total,
+                             retrain_mean_s=retrain_total / max(n_retr, 1)))
+
+
+def run_baseline_trials(widths0, X, y, X_train, y_train, X_test, y_test, *, epochs,
+                        seeds, analysis_points, use_bootstrap=True, n_random=5,
+                        max_hom_dim=0, outdir="."):
+    """Multi-seed matched-depth baseline comparison with PAIRED per-seed deltas.
+    For each seed it runs the FULL analysis pipeline (analyse_net: train, epsilon band,
+    MLP persistence -- all timed; the standard layer-persistence, MLP-persistence and
+    trajectory plots are saved for the first seed), then removes the same R hidden
+    layers by the topological / CKA / random rules and retrains (same seed and epochs).
+    Prints a per-seed paired table, a paired-delta summary, and a per-stage RUNTIME
+    table; saves baselines.json. The paired design controls for seed-to-seed variance:
+    each rule is compared on the SAME trained net."""
+    import json
+
+    print("\n" + "#" * 70)
+    print(f"# BASELINE TRIALS over {len(seeds)} seeds (full widths={tuple(widths0)})")
+    print("#" * 70)
+    records, analysis_timings = [], []
+    for si, s in enumerate(seeds):
+        print(f"\n  -- seed {s} --")
+        # full pipeline analysis (timed; plots for the first seed only)
+        arec, objs = analyse_net(
+            widths0, X, y, X_train, y_train, X_test, y_test, epochs=epochs, seed=s,
+            analysis_points=analysis_points, max_hom_dim=max_hom_dim,
+            use_bootstrap=use_bootstrap, plot=(si == 0), outdir=outdir,
+            tag=f"baseline_seed{s}", return_objs=True)
+        analysis_timings.append(arec["timings"])
+        rec = validate_baselines(objs["conv"], widths0, objs["latents"],
+                                 X_train, y_train, X_test, y_test,
+                                 full_acc=objs["full_acc"], epochs=epochs,
+                                 seed=s, n_random=n_random)
+        rec["seed"] = s
+        rec["full_acc"] = objs["full_acc"]
+        rec["analysis_timings"] = arec["timings"]
+        records.append(rec)
+
+    usable = [r for r in records if r.get("redundancy", 0) > 0]
+    print("\n" + "=" * 70)
+    print("BASELINE TRIALS -- per-seed paired accuracies (matched removal depth)")
+    print("=" * 70)
+    print(f"  {'seed':>4} | {'R':>2} | {'full':>7} | {'topo':>7} | {'CKA':>7} | "
+          f"{'rand(mean)':>10} | {'topo-rand':>9} | {'topo-CKA':>8}")
+    for r in usable:
+        topo, cka, rm = r["topo"]["acc"], r["cka"]["acc"], r["random"]["mean"]
+        print(f"  {r['seed']:>4} | {r['redundancy']:>2} | {r['full_acc']:7.4f} | "
+              f"{topo:7.4f} | {cka:7.4f} | {rm:10.4f} | "
+              f"{topo-rm:+9.4f} | {topo-cka:+8.4f}")
+    skipped = [r["seed"] for r in records if r.get("redundancy", 0) == 0]
+    if skipped:
+        print(f"  (seeds with R=0, no removal, excluded: {skipped})")
+
+    summary = dict(n_usable=len(usable))
+    if usable:
+        d_tr = [r["topo"]["acc"] - r["random"]["mean"] for r in usable]
+        d_tc = [r["topo"]["acc"] - r["cka"]["acc"] for r in usable]
+        summary.update(
+            paired_topo_minus_random_mean=float(np.mean(d_tr)),
+            paired_topo_minus_random_std=float(np.std(d_tr)),
+            paired_topo_minus_cka_mean=float(np.mean(d_tc)),
+            paired_topo_minus_cka_std=float(np.std(d_tc)),
+            topo_ge_random=int(sum(d >= 0 for d in d_tr)),
+            topo_ge_cka=int(sum(d >= 0 for d in d_tc)))
+        print(f"\n  paired mean (topo - random) = {np.mean(d_tr):+.4f} +/- "
+              f"{np.std(d_tr):.4f}   (n={len(usable)} seeds)")
+        print(f"  paired mean (topo - CKA)    = {np.mean(d_tc):+.4f} +/- "
+              f"{np.std(d_tc):.4f}")
+        print(f"  topo >= random in {summary['topo_ge_random']}/{len(d_tr)} seeds; "
+              f"topo >= CKA in {summary['topo_ge_cka']}/{len(d_tc)} seeds")
+        print("  (positive paired deltas => topological LOCALISATION beats a matched-"
+              "count removal by random position or CKA similarity)")
+
+    # ---- per-stage RUNTIME table (mean over seeds) ----
+    print("\n" + "=" * 70)
+    print("BASELINE TRIALS -- runtime per stage (mean over seeds)")
+    print("=" * 70)
+    print(f"  {'stage':>22} | {'mean s':>8} | {'std s':>7}")
+    runtime_summary = {}
+    for stage in ("train", "epsilon", "persistence"):
+        secs = [t[stage]["seconds"] for t in analysis_timings if stage in t]
+        runtime_summary[stage] = float(np.mean(secs)) if secs else 0.0
+        print(f"  {('analysis: ' + stage):>22} | {np.mean(secs):8.2f} | {np.std(secs):7.2f}")
+    bsecs = [r["runtime"]["retrain_total_s"] for r in usable if "runtime" in r]
+    bn = [r["runtime"]["n_retrains"] for r in usable if "runtime" in r]
+    if bsecs:
+        runtime_summary["baseline_retrains_total"] = float(np.mean(bsecs))
+        print(f"  {'baseline retrains':>22} | {np.mean(bsecs):8.2f} | {np.std(bsecs):7.2f}"
+              f"   ({int(np.mean(bn))} retrains/seed: topo+CKA+{n_random} random)")
+    print(f"  N={analysis_points} analysis points, B={pl.PARAMS['N_BOOT']} bootstrap, "
+          f"{len(seeds)} seeds")
+
+    with open(os.path.join(outdir, "baselines.json"), "w") as f:
+        json.dump(dict(seeds=list(seeds), start_widths=list(widths0),
+                       n_random=n_random, summary=summary,
+                       runtime_summary=runtime_summary, records=records),
+                  f, indent=2)
+    print(f"\n  saved {os.path.join(outdir, 'baselines.json')}")
+    return records
+
+
+# ============================================================================
 # Multi-trial + iterative collapse: train -> analyse -> collapse -> retrain,
 # repeated until no block remains; run over several seeds for mean+-std tables.
 # ============================================================================
@@ -215,7 +429,7 @@ def _ms(xs, fmt="{:.4f}"):
 
 def analyse_net(widths, X, y, X_train, y_train, X_test, y_test, *, epochs, seed,
                 analysis_points, max_hom_dim=0, use_bootstrap=True,
-                plot=False, outdir=".", tag=""):
+                plot=False, outdir=".", tag="", return_objs=False):
     """Train an MLP with the given hidden widths, run the H0 collapse analysis on the
     delta-net cloud, and return one record: test acc, the collapsible blocks, the
     redundancy R, the collapsed widths, and per-stage TIMINGS (train / epsilon band /
@@ -256,13 +470,17 @@ def analyse_net(widths, X, y, X_train, y_train, X_test, y_test, *, epochs, seed,
             path=os.path.join(outdir, f"diag_trajectory{sfx}.png"))
 
     timings = {"train": t_train, "epsilon": t_eps, "persistence": t_pers}
-    return dict(widths=tuple(widths), n_hidden=len(widths), acc=acc,
-                R=conv["redundancy"]["redundancy"], blocks=blocks,
-                collapsed=pl.collapsed_hidden_widths(widths, blocks),
-                n_points=n_pts,
-                timings={k: dict(seconds=v["seconds"],
-                                 mb=(v.get("py_peak_bytes") or 0) / 1e6)
-                         for k, v in timings.items()})
+    rec = dict(widths=tuple(widths), n_hidden=len(widths), acc=acc,
+               R=conv["redundancy"]["redundancy"], blocks=blocks,
+               collapsed=pl.collapsed_hidden_widths(widths, blocks),
+               n_points=n_pts,
+               timings={k: dict(seconds=v["seconds"],
+                                mb=(v.get("py_peak_bytes") or 0) / 1e6)
+                        for k, v in timings.items()})
+    if return_objs:
+        # for the baseline path: reuse the (timed, plotted) analysis without recomputing
+        return rec, dict(conv=conv, latents=latents, eps_res=eps_res, full_acc=acc)
+    return rec
 
 
 def iterative_collapse(widths0, X, y, X_train, y_train, X_test, y_test, *, epochs, seed,
@@ -407,7 +625,8 @@ def run_iterative_trials(widths0, X, y, X_train, y_train, X_test, y_test, *, epo
 
 def main(hidden_widths=(32, 16, 8, 4), epochs=2000, seed=1234, full=False,
          max_hom_dim=0, manual_eps=None, outdir='.', validate=True,
-         analysis_points=300):
+         analysis_points=300, baselines=False, n_random=5,
+         biband=False, biband_trange=None):
     # max_hom_dim=0 -> H0-only (cardio is the H0 exemplar). max_hom_dim=1 -> also loops,
     # producing TWO barcodes: one read at the H0 epsilon, one at the H1 epsilon.
     # manual_eps (str/list) -> heuristic OFF: one barcode at your hand-picked epsilons.
@@ -446,6 +665,10 @@ def main(hidden_widths=(32, 16, 8, 4), epochs=2000, seed=1234, full=False,
             out["collapse"] = validate_collapse(
                 conv, hidden_widths, X_train, y_train, X_test, y_test,
                 full_acc=acc, epochs=epochs, seed=seed)
+            if baselines:
+                out["baselines"] = validate_baselines(
+                    conv, hidden_widths, latents, X_train, y_train, X_test, y_test,
+                    full_acc=acc, epochs=epochs, seed=seed, n_random=n_random)
         return out
 
     # ---- heuristic ON: select both epsilon sequences ----
@@ -500,6 +723,33 @@ def main(hidden_widths=(32, 16, 8, 4), epochs=2000, seed=1234, full=False,
             results["H0"]["convergence"], hidden_widths,
             X_train, y_train, X_test, y_test,
             full_acc=acc, epochs=epochs, seed=seed)
+        # matched-depth baselines: random-position and CKA-similarity layer removal
+        if baselines:
+            results["baselines"] = validate_baselines(
+                results["H0"]["convergence"], hidden_widths, latents,
+                X_train, y_train, X_test, y_test,
+                full_acc=acc, epochs=epochs, seed=seed, n_random=n_random)
+            import json
+            with open(os.path.join(outdir, "baselines_singlerun.json"), "w") as f:
+                json.dump(dict(seed=seed, full_acc=acc, n_random=n_random,
+                               record=results["baselines"]), f, indent=2)
+            print(f"  saved {os.path.join(outdir, 'baselines_singlerun.json')}")
+
+    # 8. BI-PERSISTENCE BAND (single run): sweep a scale multiplier around the chosen H0
+    # epsilon and report the beta0 surface, R(t) curve and a scale-stability scalar.
+    if biband and "H0" in results:
+        import json
+        from ltep import bipersistence as bp
+        names = [f"L{i}" for i in range(len(latents))]
+        band = bp.bipersistence_band(latents, results["H0"]["epsilons"],
+                                     t_grid=biband_trange)
+        bp.plot_bipersistence_band(band, os.path.join(outdir, "diag_biband.png"),
+                                   title="cardio bi-persistence band (H0)",
+                                   layer_names=names)
+        with open(os.path.join(outdir, "biband.json"), "w") as f:
+            json.dump(band, f, indent=2)
+        print(f"\n  bi-persistence band: R(t)={band['R']}, R@t1={band['R_at_t1']}, "
+              f"stability={band['stability']:.2f}; saved diag_biband.png + biband.json")
     return results
 
 
@@ -517,6 +767,23 @@ if __name__ == "__main__":
                          "layer diagrams, e.g. '0.7,0.5,0.4,0.3,0.2,0.1'")
     ap.add_argument("--no-prune-check", action="store_true",
                     help="skip retraining the pruned network to validate prunability")
+    ap.add_argument("--baselines", action="store_true",
+                    help="matched-depth baseline comparison on a SINGLE net: remove the "
+                         "same R hidden layers by random-position and CKA-similarity "
+                         "rules, retrain, and compare against the topological collapse.")
+    ap.add_argument("--baseline-trials", action="store_true",
+                    help="multi-seed matched-depth baselines with PAIRED per-seed deltas "
+                         "(uses --trials seeds, --n-random draws); saves baselines.json.")
+    ap.add_argument("--n-random", type=int, default=5,
+                    help="number of random-position draws per net for the baselines "
+                         "(default 5).")
+    ap.add_argument("--biband", action="store_true",
+                    help="bi-persistence band (single net): sweep a scale multiplier around "
+                         "the chosen H0 epsilon and report the beta0 surface, R(t) curve and "
+                         "a scale-stability scalar (diag_biband.png + biband.json).")
+    ap.add_argument("--biband-trange", type=str, default="0.7,1.3,7",
+                    help="lo,hi,n for the bi-persistence band scale multipliers "
+                         "(default 0.7,1.3,7; t=1 = the chosen epsilon).")
     ap.add_argument("--analysis-points", type=int, default=None,
                     help=f"target size of the delta-net topology cloud "
                          f"(default {PARAMS['analysis_points']}; was ~99 at sqdist=0.5). "
@@ -561,7 +828,13 @@ if __name__ == "__main__":
                                 iterative=args.iterative, trials=args.trials,
                                 manual_eps=args.epsilons, full=args.full))
     with output.capture(rd):
-        if args.iterative:
+        if args.baseline_trials:
+            X, y, X_train, y_train, X_test, y_test = load_cardio_dataset()
+            run_baseline_trials(
+                widths, X, y, X_train, y_train, X_test, y_test, epochs=epochs,
+                seeds=list(range(args.trials)), analysis_points=n_pts,
+                use_bootstrap=args.full, n_random=args.n_random, outdir=rd)
+        elif args.iterative:
             X, y, X_train, y_train, X_test, y_test = load_cardio_dataset()
             run_iterative_trials(
                 widths, X, y, X_train, y_train, X_test, y_test, epochs=epochs,
@@ -569,7 +842,12 @@ if __name__ == "__main__":
                 max_hom_dim=mhd, use_bootstrap=args.full, max_iter=args.max_iter,
                 outdir=rd)
         else:
+            biband_trange = None
+            if args.biband:
+                lo, hi, nn = args.biband_trange.replace(" ", "").split(",")
+                biband_trange = list(np.round(np.linspace(float(lo), float(hi), int(nn)), 4))
             main(hidden_widths=widths, epochs=epochs,
                  seed=PARAMS["seed"], full=args.full, max_hom_dim=mhd,
                  manual_eps=args.epsilons, outdir=rd, validate=(not args.no_prune_check),
-                 analysis_points=n_pts)
+                 analysis_points=n_pts, baselines=args.baselines, n_random=args.n_random,
+                 biband=args.biband, biband_trange=biband_trange)
